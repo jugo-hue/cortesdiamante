@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Juego: Toca el Diamante x100</title>
+  <style>
+    :root{
+      --accent:#ffd54a;
+      --glass: rgba(255,255,255,0.12);
+      --text:#ffffff;
+    }
+    html,body{height:100%;margin:0;font-family:Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;}
+    /* Full-screen background using the image the user provided (place web.jpg alongside this HTML file) */
+    .stage{
+      position:relative;
+      width:100%;height:100%;
+      background: center center / contain no-repeat url('web.jpg');
+      display:flex;align-items:center;justify-content:center;overflow:hidden;
+    }
+    /* Soft overlay so UI is readable */
+    .overlay{
+      position:absolute;inset:0;background:linear-gradient(180deg, rgba(0,0,0,0.08), rgba(0,0,0,0.18));backdrop-filter: blur(0.5px);
+    }
+    /* HUD top */
+    .hud{
+      position:absolute;top:18px;left:18px;right:18px;display:flex;justify-content:space-between;align-items:center;gap:12px;pointer-events:none;
+    }
+    .counter{
+      pointer-events:auto;display:inline-flex;align-items:center;gap:10px;padding:8px 12px;border-radius:12px;background:var(--glass);color:var(--text);font-weight:600;box-shadow:0 6px 18px rgba(0,0,0,0.35);
+    }
+    .counter .num{font-size:20px;color:var(--accent)}
+    .hint{font-size:13px;opacity:0.95}
+
+    /* Diamond clickable area - centered */
+    .diamond-area{
+      position:relative;display:flex;align-items:center;justify-content:center;z-index:5;
+    }
+    /* Invisible clickable hotspot sized to match diamond in the picture. Adjust if you replace the image. */
+    .hotspot{
+      width:170px;height:170px;border-radius:20px;display:flex;align-items:center;justify-content:center;background:transparent;border:0;cursor:pointer;touch-action:manipulation;outline:none;transition:transform 120ms ease;box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+    }
+    .hotspot:active{transform:scale(0.95)}
+    /* A small visual glowing ring appears when the user hovers (non-mobile) */
+    .hotspot::before{
+      content:'';position:absolute;inset:-6px;border-radius:26px;box-shadow:0 0 30px rgba(0,0,0,0.3);pointer-events:none;opacity:0;transition:opacity .18s;
+    }
+    .hotspot:hover::before{opacity:1}
+
+    /* Floating label that shows +1 on each click */
+    .float-pop{
+      position:absolute;pointer-events:none;font-weight:700;padding:6px 10px;border-radius:999px;background:#000000cc;color:var(--accent);transform:translateY(0);opacity:0;transition:transform .6s cubic-bezier(.2,.9,.2,1),opacity .6s;
+    }
+
+    /* Confetti canvas sits above background but below HUD buttons */
+    #confettiCanvas{position:absolute;inset:0;width:100%;height:100%;z-index:4;pointer-events:none}
+
+    /* Final celebration panel */
+    .celebrate{
+      position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:10;visibility:hidden;opacity:0;transition:opacity .35s, visibility .35s;
+    }
+    .celebrate.visible{visibility:visible;opacity:1}
+    .card{
+      background:linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));backdrop-filter: blur(6px);border-radius:18px;padding:28px 34px;text-align:center;color:var(--text);box-shadow:0 20px 60px rgba(0,0,0,0.5);
+    }
+    .card h1{margin:0;font-size:28px}
+    .card p{margin:10px 0 0 0;opacity:0.95}
+    .btn{
+      margin-top:16px;display:inline-block;padding:10px 18px;border-radius:10px;background:var(--accent);color:#111;font-weight:700;text-decoration:none;cursor:pointer;border:none;font-size:15px
+    }
+
+    /* Responsive tweaks */
+    @media (max-width:600px){
+      .hotspot{width:120px;height:120px;border-radius:18px}
+      .counter .num{font-size:18px}
+    }
+  </style>
+</head>
+<body>
+  <div class="stage" role="application" aria-label="Juego: Toca el diamante 100 veces">
+    <div class="overlay" aria-hidden="true"></div>
+
+    <div class="hud">
+      <div class="counter" aria-live="polite">
+        <div class="hint">Toques</div>
+        <div class="num" id="count">0</div>
+        <div>/ 100</div>
+      </div>
+      <div style="pointer-events:auto">
+        <button id="reset" class="btn" style="background:transparent;color:var(--text);border:1px solid rgba(255,255,255,0.12);">Reset</button>
+      </div>
+    </div>
+
+    <!-- Confetti canvas -->
+    <canvas id="confettiCanvas" aria-hidden="true"></canvas>
+
+    <!-- Center area with invisible button positioned over the diamond in your background image -->
+    <div class="diamond-area">
+      <button id="hotspot" class="hotspot" aria-label="Diamante - toca aquí" title="Toca el diamante"></button>
+      <div id="pop" class="float-pop" style="left:50%;top:50%;transform:translate(-50%, -120%);">+1</div>
+    </div>
+
+    <!-- Celebration overlay -->
+    <div id="celebrate" class="celebrate" role="dialog" aria-modal="true" aria-hidden="true">
+      <div class="card">
+        <h1>¡Felicidades!</h1>
+        <p>Has tocado el diamante 100 veces. 🎉</p>
+        <button id="playAgain" class="btn">Jugar otra vez</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Simple counter and confetti effect implementation.
+    (function(){
+      const hotspot = document.getElementById('hotspot');
+      const countEl = document.getElementById('count');
+      const pop = document.getElementById('pop');
+      const resetBtn = document.getElementById('reset');
+      const celebratePanel = document.getElementById('celebrate');
+      const playAgain = document.getElementById('playAgain');
+
+      let count = 0;
+      const target = 100;
+
+      function updateUI(){
+        countEl.textContent = count;
+      }
+
+      // Position the pop element near the hotspot when clicked
+      function showPop(x,y){
+        pop.style.left = x + 'px';
+        pop.style.top = y + 'px';
+        pop.style.opacity = 1;
+        pop.style.transform = 'translate(-50%, -140%) scale(1)';
+        // animate
+        pop.style.transition = 'transform .7s cubic-bezier(.2,.9,.2,1), opacity .7s';
+        requestAnimationFrame(()=>{
+          pop.style.transform = 'translate(-50%, -260%) scale(0.8)';
+          pop.style.opacity = 0;
+        });
+      }
+
+      hotspot.addEventListener('click', function(e){
+        // increment
+        count = Math.min(target, count + 1);
+        updateUI();
+
+        // show floating +1 near pointer
+        const rect = hotspot.getBoundingClientRect();
+        const x = e.clientX || (rect.left + rect.width/2);
+        const y = e.clientY || (rect.top + rect.height/2);
+        showPop(x, y);
+
+        // small pulse animation on hotspot
+        hotspot.animate([
+          {transform: 'scale(1)'},
+          {transform: 'scale(1.08)'},
+          {transform: 'scale(1)'}
+        ], {duration:220, easing:'ease-out'});
+
+        // small particle burst on each click (tiny confetti)
+        tinyBurst(x, y);
+
+        if(count >= target){
+          celebrate();
+        }
+      }, {passive:true});
+
+      resetBtn.addEventListener('click', ()=>{
+        count = 0;updateUI();
+      });
+
+      playAgain.addEventListener('click', ()=>{
+        count = 0;updateUI();hideCelebrate();
+      });
+
+      // ---- Confetti system ----
+      const canvas = document.getElementById('confettiCanvas');
+      const ctx = canvas.getContext('2d');
+      let W, H, particles = [];
+
+      function resize(){
+        W = canvas.width = innerWidth * devicePixelRatio;
+        H = canvas.height = innerHeight * devicePixelRatio;
+        canvas.style.width = innerWidth + 'px';
+        canvas.style.height = innerHeight + 'px';
+        ctx.scale(devicePixelRatio, devicePixelRatio);
+      }
+      addEventListener('resize', resize);
+      resize();
+
+      function random(min,max){return Math.random()*(max-min)+min}
+
+      // Particle constructor
+      function Particle(x,y, vx, vy, size, color){
+        this.x = x; this.y = y; this.vx = vx; this.vy = vy; this.size = size; this.color = color; this.gravity = 0.18; this.life = 120; this.tilt = Math.random()*0.5; this.rotation = Math.random()*360;
+      }
+      Particle.prototype.update = function(){
+        this.x += this.vx; this.y += this.vy; this.vy += this.gravity; this.vx *= 0.99; this.rotation += this.vx*6; this.life--;
+      }
+      Particle.prototype.draw = function(c){
+        c.save();
+        c.translate(this.x, this.y);
+        c.rotate(this.rotation * Math.PI/180);
+        c.fillStyle = this.color;
+        c.fillRect(-this.size/2, -this.size/2, this.size, this.size*0.6);
+        c.restore();
+      }
+
+      function tinyBurst(x,y){
+        // convert client coordinates to canvas coordinates (account for DPR)
+        const rect = canvas.getBoundingClientRect();
+        const cx = (x - rect.left);
+        const cy = (y - rect.top);
+        for(let i=0;i<8;i++){
+          const angle = random(-Math.PI, Math.PI);
+          const speed = random(1.5,4.5);
+          const vx = Math.cos(angle)*speed;
+          const vy = Math.sin(angle)*speed - 2;
+          const size = Math.round(random(6,12));
+          const color = pickColor();
+          particles.push(new Particle(cx, cy, vx, vy, size, color));
+        }
+      }
+
+      function pickColor(){
+        const palette = ['#ff3b3b','#ffd54a','#7cffc7','#4dc0ff','#c77bff','#ff8fb3'];
+        return palette[Math.floor(Math.random()*palette.length)];
+      }
+
+      // Big confetti explode for celebration
+      function explodeAll(){
+        const area = {x: innerWidth/2, y: innerHeight/2};
+        for(let n=0;n<220;n++){
+          const angle = random(-Math.PI, Math.PI);
+          const speed = random(2,8);
+          const vx = Math.cos(angle)*speed + random(-1,1);
+          const vy = Math.sin(angle)*speed - random(1,4);
+          const size = Math.round(random(6,14));
+          const color = pickColor();
+          particles.push(new Particle(area.x + random(-100,100), area.y + random(-30,30), vx, vy, size, color));
+        }
+      }
+
+      // Animation loop
+      function loop(){
+        ctx.clearRect(0,0,innerWidth,innerHeight);
+        for(let i=particles.length-1;i>=0;i--){
+          const p = particles[i];
+          p.update();
+          p.draw(ctx);
+          if(p.y > innerHeight + 40 || p.life <= 0){ particles.splice(i,1); }
+        }
+        requestAnimationFrame(loop);
+      }
+      loop();
+
+      function celebrate(){
+        // trigger big confetti
+        explodeAll();
+        // show modal
+        celebratePanel.classList.add('visible');
+        celebratePanel.setAttribute('aria-hidden','false');
+        // subtle scale animation
+        celebratePanel.querySelector('.card').animate([
+          {transform:'scale(.9)', opacity:0},
+          {transform:'scale(1)', opacity:1}
+        ],{duration:420,easing:'cubic-bezier(.2,.9,.2,1)'});
+      }
+      function hideCelebrate(){
+        celebratePanel.classList.remove('visible');
+        celebratePanel.setAttribute('aria-hidden','true');
+      }
+
+      // Accessibility: allow keyboard Enter/Space to activate
+      hotspot.addEventListener('keydown', function(e){
+        if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); hotspot.click(); }
+      });
+
+      // Initial UI
+      updateUI();
+
+      // Small tip: If your image position is slightly off, you can move the hotspot by CSS in .hotspot (use transform: translate(...)) or adjust width/height.
+
+    })();
+  </script>
+</body>
+</html>
